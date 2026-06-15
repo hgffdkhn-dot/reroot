@@ -13,13 +13,13 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Setup Java
+    - name: Setup Java (升级到 Java 17 支持现代 Compose)
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '11'
+        java-version: '17'
 
-    - name: Auto-Heal Root build.gradle (强制修复根配置)
+    - name: Auto-Heal Root build.gradle (配置现代构建环境)
       run: |
         cat << 'EOF' > build.gradle
         buildscript {
@@ -28,8 +28,8 @@ jobs:
                 mavenCentral()
             }
             dependencies {
-                classpath "com.android.tools.build:gradle:7.0.2"
-                classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.5.21"
+                classpath "com.android.tools.build:gradle:8.1.1"
+                classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.10"
             }
         }
         task clean(type: Delete) {
@@ -37,7 +37,7 @@ jobs:
         }
         EOF
 
-    - name: Auto-Heal App build.gradle (强制修复App配置)
+    - name: Auto-Heal App build.gradle (注入全套 Compose 与 AIDL 依赖)
       run: |
         cat << 'EOF' > app/build.gradle
         plugins {
@@ -45,27 +45,39 @@ jobs:
             id 'org.jetbrains.kotlin.android'
         }
         android {
-            compileSdk 33
+            namespace 'com.rfcore.manager'
+            compileSdk 34
             defaultConfig {
                 applicationId "com.rfcore.manager"
                 minSdk 29
-                targetSdk 33
+                targetSdk 34
                 versionCode 1
                 versionName "1.0"
             }
             compileOptions {
-                sourceCompatibility JavaVersion.VERSION_1_8
-                targetCompatibility JavaVersion.VERSION_1_8
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
             }
             kotlinOptions {
-                jvmTarget = '1.8'
+                jvmTarget = '17'
             }
             buildFeatures {
+                compose true
                 aidl true
+            }
+            composeOptions {
+                kotlinCompilerExtensionVersion '1.4.3'
             }
         }
         dependencies {
-            implementation 'androidx.core:core-ktx:1.7.0'
+            implementation 'androidx.core:core-ktx:1.12.0'
+            implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+            implementation 'androidx.activity:activity-compose:1.8.0'
+            implementation platform('androidx.compose:compose-bom:2023.10.01')
+            implementation 'androidx.compose.ui:ui'
+            implementation 'androidx.compose.material3:material3'
+            implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2'
+            implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
         }
         EOF
 
