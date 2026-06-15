@@ -13,11 +13,22 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Setup Java (升级到 Java 17 支持现代 Compose)
+    - name: Setup Java (使用 Java 17)
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
+
+    - name: Auto-Heal Gradle Wrapper (强制升级底层引擎解决 version 61 冲突)
+      run: |
+        mkdir -p gradle/wrapper
+        cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
+        distributionBase=GRADLE_USER_HOME
+        distributionPath=wrapper/dists
+        distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip
+        zipStoreBase=GRADLE_USER_HOME
+        zipStorePath=wrapper/dists
+        EOF
 
     - name: Auto-Heal Root build.gradle (配置现代构建环境)
       run: |
