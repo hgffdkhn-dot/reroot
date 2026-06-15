@@ -1,46 +1,21 @@
-plugins {
-id 'com.android.application'
-id 'org.jetbrains.kotlin.android'
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:7.0.1"
+        
+        // 👇 就是补全了这一行核心代码：告诉云端服务器 Kotlin 编译插件的下载地址
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.5.21" 
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
 }
 
-android {
-namespace 'com.rfcore.manager'
-compileSdk 34
-
-defaultConfig {
-applicationId "com.rfcore.manager"
-minSdk 29
-targetSdk 34
-versionCode 1
-versionName "1.0"
+task clean(type: Delete) {
+    delete rootProject.buildDir
 }
 
-buildFeatures {
-compose true
-aidl true
-}
-
-composeOptions {
-kotlinCompilerExtensionVersion '1.5.1'
-}
-
-compileOptions {
-sourceCompatibility JavaVersion.VERSION_1_8
-targetCompatibility JavaVersion.VERSION_1_8
-}
-
-kotlinOptions {
-jvmTarget = '1.8'
-}
-}
-
-dependencies {
-implementation 'androidx.core:core-ktx:1.12.0'
-implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
-implementation 'androidx.activity:activity-compose:1.8.2'
-implementation platform('androidx.compose:compose-bom:2024.02.00')
-implementation 'androidx.compose.ui:ui'
-implementation 'androidx.compose.ui:ui-graphics'
-implementation 'androidx.compose.material3:material3'
-implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
-}
