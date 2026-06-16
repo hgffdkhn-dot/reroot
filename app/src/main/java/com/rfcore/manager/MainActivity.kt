@@ -15,7 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 // =======================================================
-// 🚨 极其重要：确保这里导入的包名与你的 AIDL 文件完全一致！
+// 导入 AIDL 接口
 import rfcore.daemon.IRFCoreBootstrap
 import rfcore.daemon.IRFCoreService
 // =======================================================
@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
 }
 
 // ==========================================
-// 🚨 核心逻辑：两段式获取底层服务 (彻底解决崩溃白屏)
+// 🚨 核心逻辑：完美适配 getWorker() 的两段式获取
 // ==========================================
 fun connectToDaemon(): IRFCoreService? {
     try {
@@ -45,32 +45,27 @@ fun connectToDaemon(): IRFCoreService? {
         val serviceManager = Class.forName("android.os.ServiceManager")
         val getServiceMethod = serviceManager.getMethod("getService", String::class.java)
         
-        // 第一阶段：拿到我们在 C++ (main.cpp) 里注册的 "看门人"
+        // 第一阶段：拿到看门人
         val rawBinder = getServiceMethod.invoke(null, "rfcore.bootstrap") as IBinder?
         
         if (rawBinder != null) {
             Log.d("RFCore_App", "2. 成功拿到原生 Binder，准备转换为看门人 Bootstrap")
-            
-            // 将原始句柄转换为【看门人】(千万不能直接转为 Service！)
             val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
             
-            Log.d("RFCore_App", "3. 向看门人索要真正的干活 Worker 句柄...")
+            Log.d("RFCore_App", "3. 呼叫看门人，获取真正的 Worker...")
             
-            // ⚠️⚠️⚠️ 终极警告 ⚠️⚠️⚠️
-            // 这里的 getService() 必须替换为你在 IRFCoreBootstrap.aidl 中定义的方法名！
-            // 如果你在 AIDL 里写的是 IBinder getCoreService(); 请改成 bootstrap.getCoreService()
-            // 在 Kotlin 里它也可能被识别为属性，比如 bootstrap.service
-            val workerBinder = bootstrap.getService() 
+            // 🚨 核心修复：直接调用 getWorker()！
+            // AIDL 已经定义了返回 IRFCoreService，不需要再次 asInterface 强转！
+            val worker = bootstrap.getWorker() 
             
-            Log.d("RFCore_App", "4. 成功拿到 Worker，正在强转为 IRFCoreService")
-            // 第二阶段：将真正的 Worker 转换为我们在前台使用的核心接口
-            return IRFCoreService.Stub.asInterface(workerBinder)
+            Log.d("RFCore_App", "4. 完美拿到 Worker 实例！")
+            return worker
         } else {
-            Log.e("RFCore_App", "ServiceManager 返回了 null，请确保你已经执行了 su -c setenforce 0")
+            Log.e("RFCore_App", "ServiceManager 返回了 null，请确保开启了宽容模式")
         }
     } catch (e: Exception) {
         Log.e("RFCore_App", "连接底层发生致命崩溃", e)
-        throw e // 直接抛出异常，让下方的 Toast 将详细死因显示在屏幕上！
+        throw e
     }
     return null
 }
@@ -95,10 +90,10 @@ fun RFCoreTestScreen() {
             try {
                 val service = connectToDaemon()
                 if (service != null) {
-                    // 1. 测试心跳 (AIDL 定义的 getStatus 在 Kotlin 中默认映射为 status 属性)
+                    // 1. 测试心跳 (调用底层 getStatus)
                     val status = service.status 
                     
-                    // 2. 注入一条假数据 (用于打破数据库空白的假象)
+                    // 2. 注入一条假数据 (UID: 10000, 授权读文件)
                     val isSuccess = service.grantCapability(
                         10000, 
                         "com.test.dummy", 
@@ -112,7 +107,7 @@ fun RFCoreTestScreen() {
                     Toast.makeText(context, "❌ 拿不到 Service，检查是否忘记开启宽容模式", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                // 如果还崩，这里会把你把异常名字 (如 NoSuchMethodError) 吐在屏幕上
+                // 将异常抛出至前台，不再只是白屏或 null
                 Toast.makeText(context, "💥 崩溃死因:\n${e.javaClass.simpleName}\n${e.message}", Toast.LENGTH_LONG).show()
             }
         }) {
