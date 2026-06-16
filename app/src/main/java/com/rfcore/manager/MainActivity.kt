@@ -1,4 +1,4 @@
-package com.rfcore.manager // ⚠️ 如果你的包名不同，请改回你原来的包名
+package com.rfcore.manager
 
 import android.os.Bundle
 import android.os.IBinder
@@ -14,9 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
-// ⚠️ 极其重要：导入你生成的 AIDL 接口
+// =======================================================
+// 🚨 极其重要：确保这里导入的包名与你的 AIDL 文件完全一致！
 import rfcore.daemon.IRFCoreBootstrap
 import rfcore.daemon.IRFCoreService
+// =======================================================
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,38 +37,46 @@ class MainActivity : ComponentActivity() {
 }
 
 // ==========================================
-// 🚨 核心修复 2：正确的反射获取系统底层服务逻辑
+// 🚨 核心逻辑：两段式获取底层服务 (彻底解决崩溃白屏)
 // ==========================================
 fun connectToDaemon(): IRFCoreService? {
     try {
-        Log.d("RFCore_App", "开始尝试通过反射获取底层服务...")
+        Log.d("RFCore_App", "1. 开始通过反射调用 ServiceManager...")
         val serviceManager = Class.forName("android.os.ServiceManager")
         val getServiceMethod = serviceManager.getMethod("getService", String::class.java)
         
-        // 1. 获取原生的 Binder 句柄 (我们在 main.cpp 里注册的名字)
+        // 第一阶段：拿到我们在 C++ (main.cpp) 里注册的 "看门人"
         val rawBinder = getServiceMethod.invoke(null, "rfcore.bootstrap") as IBinder?
         
         if (rawBinder != null) {
-            Log.d("RFCore_App", "拿到原生 Binder！")
+            Log.d("RFCore_App", "2. 成功拿到原生 Binder，准备转换为看门人 Bootstrap")
             
-            // 2. 【架构适配分支】：
-            // 如果你在 C++ 层把 Bootstrap 作为马甲，Service 作为真正的工人，
-            // 且在 AIDL 里写了类似 getCoreService() 的方法，请用下面这行：
-            // val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
-            // return IRFCoreService.Stub.asInterface(bootstrap.getCoreService())
+            // 将原始句柄转换为【看门人】(千万不能直接转为 Service！)
+            val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
             
-            // 如果你其实在底层直接就是把 Service 转成了 Binder 交出去了，
-            // 那么直接强转为 IRFCoreService 即可 (绝大多数情况是这种)：
-            return IRFCoreService.Stub.asInterface(rawBinder)
+            Log.d("RFCore_App", "3. 向看门人索要真正的干活 Worker 句柄...")
+            
+            // ⚠️⚠️⚠️ 终极警告 ⚠️⚠️⚠️
+            // 这里的 getService() 必须替换为你在 IRFCoreBootstrap.aidl 中定义的方法名！
+            // 如果你在 AIDL 里写的是 IBinder getCoreService(); 请改成 bootstrap.getCoreService()
+            // 在 Kotlin 里它也可能被识别为属性，比如 bootstrap.service
+            val workerBinder = bootstrap.getService() 
+            
+            Log.d("RFCore_App", "4. 成功拿到 Worker，正在强转为 IRFCoreService")
+            // 第二阶段：将真正的 Worker 转换为我们在前台使用的核心接口
+            return IRFCoreService.Stub.asInterface(workerBinder)
+        } else {
+            Log.e("RFCore_App", "ServiceManager 返回了 null，请确保你已经执行了 su -c setenforce 0")
         }
     } catch (e: Exception) {
-        Log.e("RFCore_App", "连接底层发生致命崩溃: ${e.message}", e)
+        Log.e("RFCore_App", "连接底层发生致命崩溃", e)
+        throw e // 直接抛出异常，让下方的 Toast 将详细死因显示在屏幕上！
     }
     return null
 }
 
 // ==========================================
-// 🚨 核心修复 3：增加手动测试和造数据的按钮
+// 界面：测试控制台
 // ==========================================
 @Composable
 fun RFCoreTestScreen() {
@@ -85,11 +95,10 @@ fun RFCoreTestScreen() {
             try {
                 val service = connectToDaemon()
                 if (service != null) {
-                    // 测试一：心跳检测
+                    // 1. 测试心跳 (AIDL 定义的 getStatus 在 Kotlin 中默认映射为 status 属性)
                     val status = service.status 
                     
-                    // 测试二：向空白数据库注入一条“假数据”
-                    // 参数：UID(10000), 包名, 权限名, 是否允许(1), 过期时间(0=永久)
+                    // 2. 注入一条假数据 (用于打破数据库空白的假象)
                     val isSuccess = service.grantCapability(
                         10000, 
                         "com.test.dummy", 
@@ -98,12 +107,13 @@ fun RFCoreTestScreen() {
                         0L
                     )
                     
-                    Toast.makeText(context, "🎉 连接成功! 状态码:$status\n假数据注入:$isSuccess", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "🎉 完美打通底层!\n状态码: $status\n假数据注入: $isSuccess", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(context, "❌ 未拿到 Service 对象，请查 Logcat", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "❌ 拿不到 Service，检查是否忘记开启宽容模式", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Toast.makeText(context, "💥 发生崩溃: ${e.message}", Toast.LENGTH_LONG).show()
+                // 如果还崩，这里会把你把异常名字 (如 NoSuchMethodError) 吐在屏幕上
+                Toast.makeText(context, "💥 崩溃死因:\n${e.javaClass.simpleName}\n${e.message}", Toast.LENGTH_LONG).show()
             }
         }) {
             Text("点我连接底层 并 注入测试策略")
