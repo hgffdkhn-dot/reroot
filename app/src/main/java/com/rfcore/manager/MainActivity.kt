@@ -17,17 +17,22 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-// 导入你的 AIDL 接口 (如果报错，请检查你的包名和类名)
+// =======================================================
+// 导入你的 AIDL 接口数据模型
 import rfcore.daemon.IRFCoreBootstrap
 import rfcore.daemon.IRFCoreService
-import rfcore.daemon.PolicyRecord // 确保你导了 PolicyRecord 数据模型
+import rfcore.daemon.PolicyRecord
+// =======================================================
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(), 
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     RFCoreMainScreen()
                 }
             }
@@ -35,16 +40,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 依然是那套完美防弹的连接逻辑
+// ==========================================
+// 🚨 核心逻辑：获取底层 Worker
+// ==========================================
 fun connectToDaemon(): IRFCoreService? {
     try {
         val serviceManager = Class.forName("android.os.ServiceManager")
         val getServiceMethod = serviceManager.getMethod("getService", String::class.java)
+        
+        // 1. 拿到看门人
         val rawBinder = getServiceMethod.invoke(null, "rfcore.bootstrap") as IBinder?
         
         if (rawBinder != null) {
             val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
-            return bootstrap.worker // 调用你 AIDL 里的 getWorker()
+            // 2. 拿到干活的 Worker
+            return bootstrap.worker 
         }
     } catch (e: Exception) {
         Log.e("RFCore_App", "连接底层崩溃", e)
@@ -52,20 +62,24 @@ fun connectToDaemon(): IRFCoreService? {
     return null
 }
 
+// ==========================================
+// 界面：动态渲染策略列表
+// ==========================================
 @Composable
 fun RFCoreMainScreen() {
     val context = LocalContext.current
+    
     // 状态管理：保存底层服务句柄和策略列表
     var rfService by remember { mutableStateOf<IRFCoreService?>(null) }
     var policyList by remember { mutableStateOf<List<PolicyRecord>>(emptyList()) }
 
-    // 界面一启动，自动去底层建立连接
+    // 界面一启动，自动去底层建立连接并拉取数据
     LaunchedEffect(Unit) {
         rfService = connectToDaemon()
         if (rfService != null) {
             try {
-                // 连接成功后，立刻拉取底层数据库的策略列表！
-                policyList = rfService!!.policies ?: emptyList() 
+                // 🚨 核心修复：加上 .toList()，将 AIDL 的 Array 顺滑转换为 Compose 需要的 List
+                policyList = rfService!!.policies?.toList() ?: emptyList() 
             } catch (e: Exception) {
                 Toast.makeText(context, "拉取列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -79,7 +93,13 @@ fun RFCoreMainScreen() {
         Spacer(modifier = Modifier.height(16.dp))
         
         // 顶部状态栏
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if(rfService != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(), 
+            colors = CardDefaults.cardColors(
+                containerColor = if(rfService != null) MaterialTheme.colorScheme.primaryContainer 
+                                 else MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
             Text(
                 text = if (rfService != null) "✅ 底层守护进程已连接" else "❌ 底层未连接",
                 modifier = Modifier.padding(16.dp),
@@ -104,10 +124,15 @@ fun RFCoreMainScreen() {
     }
 }
 
-// 单个策略的卡片 UI
+// ==========================================
+// 组件：单个策略的卡片 UI
+// ==========================================
 @Composable
 fun PolicyCard(policy: PolicyRecord) {
-    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), 
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(text = "包名: ${policy.packageName}", fontWeight = FontWeight.Bold)
             Text(text = "目标 UID: ${policy.uid}")
