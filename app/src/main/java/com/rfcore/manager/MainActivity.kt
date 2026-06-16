@@ -7,111 +7,115 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-// =======================================================
-// 导入 AIDL 接口
+// 导入你的 AIDL 接口 (如果报错，请检查你的包名和类名)
 import rfcore.daemon.IRFCoreBootstrap
 import rfcore.daemon.IRFCoreService
-// =======================================================
+import rfcore.daemon.PolicyRecord // 确保你导了 PolicyRecord 数据模型
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    RFCoreTestScreen()
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    RFCoreMainScreen()
                 }
             }
         }
     }
 }
 
-// ==========================================
-// 🚨 核心逻辑：完美适配 getWorker() 的两段式获取
-// ==========================================
+// 依然是那套完美防弹的连接逻辑
 fun connectToDaemon(): IRFCoreService? {
     try {
-        Log.d("RFCore_App", "1. 开始通过反射调用 ServiceManager...")
         val serviceManager = Class.forName("android.os.ServiceManager")
         val getServiceMethod = serviceManager.getMethod("getService", String::class.java)
-        
-        // 第一阶段：拿到看门人
         val rawBinder = getServiceMethod.invoke(null, "rfcore.bootstrap") as IBinder?
         
         if (rawBinder != null) {
-            Log.d("RFCore_App", "2. 成功拿到原生 Binder，准备转换为看门人 Bootstrap")
             val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
-            
-            Log.d("RFCore_App", "3. 呼叫看门人，获取真正的 Worker...")
-            
-            // 🚨 核心修复：直接调用 getWorker()！
-            // AIDL 已经定义了返回 IRFCoreService，不需要再次 asInterface 强转！
-            val worker = bootstrap.getWorker() 
-            
-            Log.d("RFCore_App", "4. 完美拿到 Worker 实例！")
-            return worker
-        } else {
-            Log.e("RFCore_App", "ServiceManager 返回了 null，请确保开启了宽容模式")
+            return bootstrap.worker // 调用你 AIDL 里的 getWorker()
         }
     } catch (e: Exception) {
-        Log.e("RFCore_App", "连接底层发生致命崩溃", e)
-        throw e
+        Log.e("RFCore_App", "连接底层崩溃", e)
     }
     return null
 }
 
-// ==========================================
-// 界面：测试控制台
-// ==========================================
 @Composable
-fun RFCoreTestScreen() {
+fun RFCoreMainScreen() {
     val context = LocalContext.current
+    // 状态管理：保存底层服务句柄和策略列表
+    var rfService by remember { mutableStateOf<IRFCoreService?>(null) }
+    var policyList by remember { mutableStateOf<List<PolicyRecord>>(emptyList()) }
 
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(text = "RFCore 终极测试控制台", style = MaterialTheme.typography.headlineMedium)
-        
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Button(onClick = {
+    // 界面一启动，自动去底层建立连接
+    LaunchedEffect(Unit) {
+        rfService = connectToDaemon()
+        if (rfService != null) {
             try {
-                val service = connectToDaemon()
-                if (service != null) {
-                    // 1. 测试心跳 (调用底层 getStatus)
-                    val status = service.status 
-                    
-                    // 2. 注入一条假数据 (UID: 10000, 授权读文件)
-                    val isSuccess = service.grantCapability(
-                        10000, 
-                        "com.test.dummy", 
-                        "CAP_READ_FILE", 
-                        1, 
-                        0L
-                    )
-                    
-                    Toast.makeText(context, "🎉 完美打通底层!\n状态码: $status\n假数据注入: $isSuccess", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(context, "❌ 拿不到 Service，检查是否忘记开启宽容模式", Toast.LENGTH_SHORT).show()
-                }
+                // 连接成功后，立刻拉取底层数据库的策略列表！
+                policyList = rfService!!.policies ?: emptyList() 
             } catch (e: Exception) {
-                // 将异常抛出至前台，不再只是白屏或 null
-                Toast.makeText(context, "💥 崩溃死因:\n${e.javaClass.simpleName}\n${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "拉取列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
             }
-        }) {
-            Text("点我连接底层 并 注入测试策略")
+        } else {
+            Toast.makeText(context, "未连接到底层，请确认在宽容模式下！", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text("RFCore 授权管理", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // 顶部状态栏
+        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if(rfService != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+            Text(
+                text = if (rfService != null) "✅ 底层守护进程已连接" else "❌ 底层未连接",
+                modifier = Modifier.padding(16.dp),
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // 渲染策略列表
+        if (policyList.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("暂无授权策略 (列表为空)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(policyList) { policy ->
+                    PolicyCard(policy)
+                }
+            }
+        }
+    }
+}
+
+// 单个策略的卡片 UI
+@Composable
+fun PolicyCard(policy: PolicyRecord) {
+    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(text = "包名: ${policy.packageName}", fontWeight = FontWeight.Bold)
+            Text(text = "目标 UID: ${policy.uid}")
+            Text(text = "请求权限: ${policy.capability}", color = MaterialTheme.colorScheme.primary)
+            Text(
+                text = "状态: ${if (policy.isGranted == 1) "✅ 已允许" else "❌ 已拒绝"}", 
+                color = if (policy.isGranted == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+            )
         }
     }
 }
