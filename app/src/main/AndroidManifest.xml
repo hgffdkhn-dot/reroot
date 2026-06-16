@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.rfcore.manager"> <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -10,10 +11,11 @@
         android:label="RFCore Manager"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.RFCoreManager"> <activity
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"> 
+        <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.RFCoreManager">
+            android:theme="@android:style/Theme.Material.Light.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
