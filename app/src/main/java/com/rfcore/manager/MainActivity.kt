@@ -17,12 +17,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.concurrent.CompletableFuture
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // 导入你的 AIDL 接口
 import rfcore.daemon.IRFCoreBootstrap
 import rfcore.daemon.IRFCoreService
 import rfcore.daemon.PolicyRecord
-import rfcore.daemon.IAuthCallback // 🚨 我们新建的回调合同
+import rfcore.daemon.IAuthCallback
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,7 +40,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// 连接底层的逻辑
 fun connectToDaemon(): IRFCoreService? {
     try {
         val serviceManager = Class.forName("android.os.ServiceManager")
@@ -53,93 +55,84 @@ fun connectToDaemon(): IRFCoreService? {
     return null
 }
 
-// 专门用来保存底层呼叫请求的数据类
 data class AuthRequestData(
     val uid: Int,
     val processName: String,
     val capability: String,
-    // 这个 Future 是黑客魔法：用来挂起底层的 C++ 线程，直到用户点击按钮！
     val future: CompletableFuture<Int> 
 )
 
 @Composable
 fun RFCoreMainScreen() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope() // 引入协程作用域
     
     var rfService by remember { mutableStateOf<IRFCoreService?>(null) }
     var policyList by remember { mutableStateOf<List<PolicyRecord>>(emptyList()) }
-    
-    // 🚨 新增：用于触发拦截弹窗的状态
     var currentAuthRequest by remember { mutableStateOf<AuthRequestData?>(null) }
 
-    // 🚨 核心逻辑：制造一个接听底层电话的“接线员”
     val authCallback = remember {
         object : IAuthCallback.Stub() {
             override fun onAuthRequested(uid: Int, processName: String, capability: String): Int {
                 Log.w("RFCore_App", "🚨 收到底层拦截警报！UID: $uid, 进程: $processName")
-                
                 val future = CompletableFuture<Int>()
-                
-                // 将拦截信息推送到前台 UI 状态，触发弹窗
+                // 推送到前台触发弹窗显示
                 currentAuthRequest = AuthRequestData(uid, processName, capability, future)
-                
-                // ⚠️ 极其硬核：在这里调用 future.get() 会直接死锁并挂起当前这个 Binder 线程！
-                // 这正是我们想要的！C++ 底层会一直卡在这里等待，从而实现对目标流氓软件的“时间静止”！
-                // 直到用户在 UI 上点击了按钮，调用了 future.complete()，这里才会放行，并把结果返回给 C++！
+                // 挂起当前的 Binder 线程，等待用户决定
                 return future.get() 
             }
         }
     }
 
+    // 🚨 核心修复：切到后台线程初始化，防止 Binder 锁死 UI 线程
     LaunchedEffect(Unit) {
-        rfService = connectToDaemon()
-        if (rfService != null) {
-            try {
-                // 1. 把接线员注册给底层守护进程
-                rfService!!.registerAuthCallback(authCallback)
-                Log.d("RFCore_App", "✅ 回调通道注册成功！正严阵以待！")
-                
-                // 2. 拉取列表
-                policyList = rfService!!.policies?.toList() ?: emptyList() 
-            } catch (e: Exception) {
-                Toast.makeText(context, "初始化失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        withContext(Dispatchers.IO) {
+            val service = connectToDaemon()
+            if (service != null) {
+                rfService = service
+                try {
+                    rfService!!.registerAuthCallback(authCallback)
+                    val policies = rfService!!.policies?.toList() ?: emptyList()
+                    withContext(Dispatchers.Main) {
+                        policyList = policies
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "通道初始化失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
-        } else {
-            Toast.makeText(context, "未连接到底层，请确认在宽容模式下！", Toast.LENGTH_LONG).show()
         }
     }
 
     // ----------------------------------------------------
-    // 🚨 拦截弹窗 UI
+    // 拦截弹窗组件
     // ----------------------------------------------------
     currentAuthRequest?.let { request ->
         AlertDialog(
             onDismissRequest = { 
-                // 如果用户强行点旁边取消，默认拒绝
                 request.future.complete(0)
                 currentAuthRequest = null 
             },
-            title = { Text("⚠️ 敏感权限请求", color = MaterialTheme.colorScheme.error) },
+            title = { Text("⚠️ 越权行为拦截警报", color = MaterialTheme.colorScheme.error) },
             text = {
                 Column {
-                    Text("有一个应用正在尝试越权访问！")
+                    Text("检测到有未授权应用正在试图突破核心数据隔离：")
                     Spacer(Modifier.height(8.dp))
-                    Text("UID: ${request.uid}", fontWeight = FontWeight.Bold)
-                    Text("进程: ${request.processName}", fontWeight = FontWeight.Bold)
-                    Text("请求动作: ${request.capability}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text("目标 UID: ${request.uid}", fontWeight = FontWeight.Bold)
+                    Text("可疑进程: ${request.processName}", fontWeight = FontWeight.Bold)
+                    Text("越权动作: ${request.capability}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    // 用户点击允许，解冻底层线程并返回 1
-                    request.future.complete(1)
+                    request.future.complete(1) // 返回 1 表示放行
                     currentAuthRequest = null
-                }) { Text("允许执行") }
+                }) { Text("放行执行") }
             },
             dismissButton = {
                 OutlinedButton(onClick = {
-                    // 用户点击拒绝，解冻底层线程并返回 0
-                    request.future.complete(0)
+                    request.future.complete(0) // 返回 0 表示拦截拒绝
                     currentAuthRequest = null
                 }) { Text("残忍拒绝") }
             }
@@ -147,7 +140,7 @@ fun RFCoreMainScreen() {
     }
 
     // ----------------------------------------------------
-    // 主界面渲染 (和之前一样)
+    // 主界面布局
     // ----------------------------------------------------
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("RFCore 授权管理", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
@@ -162,6 +155,32 @@ fun RFCoreMainScreen() {
         }
         
         Spacer(modifier = Modifier.height(16.dp))
+
+        // 🚨 新增：模拟底层拦截功能测试按钮
+        if (rfService != null) {
+            Button(
+                onClick = {
+                    scope.launch(Dispatchers.IO) { // 在后台线程发起请求
+                        try {
+                            // 呼叫底层的 getStatus 方法，在 C++ 内部触发反向拦截测试
+                            val result = rfService!!.status
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "模拟测试完毕！底层收到的处理结果: $result", Toast.LENGTH_LONG).show()
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(context, "测试触发失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+            ) {
+                Text("🚀 点击模拟【底层越权拦截】双向测试")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
         
         if (policyList.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
