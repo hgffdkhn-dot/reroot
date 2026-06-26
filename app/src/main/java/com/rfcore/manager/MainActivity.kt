@@ -84,7 +84,6 @@ object EnvUtils {
         } catch (e: Exception) { "无法读取日志: ${e.message}" }
     }
 
-    // 检查 GitHub 更新
     fun checkGitHubUpdate(onResult: (hasUpdate: Boolean, latestVersion: String, releaseNotes: String) -> Unit) {
         Thread {
             try {
@@ -117,7 +116,6 @@ object EnvUtils {
 // =======================================================
 @Composable
 fun RFCoreApp() {
-    // 简单的路由状态: "main" (主界面) 或 "flashing" (刷机页面)
     var currentRoute by remember { mutableStateOf("main") }
     var flashMode by remember { mutableStateOf("") }
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
@@ -150,12 +148,10 @@ fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
     val prefs = context.getSharedPreferences("rfcore_prefs", Context.MODE_PRIVATE)
     val autoUpdate = prefs.getBoolean("auto_update", true)
 
-    // 自动更新检测弹窗状态
     var showUpdateDialog by remember { mutableStateOf(false) }
     var updateVersion by remember { mutableStateOf("") }
     var updateNotes by remember { mutableStateOf("") }
 
-    // 启动时检测更新
     LaunchedEffect(Unit) {
         if (autoUpdate) {
             EnvUtils.checkGitHubUpdate { hasUpdate, version, notes ->
@@ -192,7 +188,6 @@ fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
         }
     }
 
-    // 更新弹窗
     if (showUpdateDialog) {
         AlertDialog(
             onDismissRequest = { showUpdateDialog = false },
@@ -202,7 +197,6 @@ fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
                 TextButton(onClick = { 
                     showUpdateDialog = false
                     Toast.makeText(context, "正在前往下载...", Toast.LENGTH_SHORT).show()
-                    // TODO: 触发下载逻辑
                 }) { Text("立即更新") }
             },
             dismissButton = {
@@ -213,7 +207,7 @@ fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
 }
 
 // =======================================================
-// 🏠 标签一：主页 (安装逻辑与警告弹窗)
+// 🏠 标签一：主页
 // =======================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -224,11 +218,9 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
     val hasRoot by remember { mutableStateOf(EnvUtils.hasRoot()) }
     val isAB by remember { mutableStateOf(EnvUtils.isABDevice()) }
 
-    // 警告弹窗状态
     var showDirectWarn by remember { mutableStateOf(false) }
     var showOtaWarn by remember { mutableStateOf(false) }
 
-    // 文件选择器 (SAF)
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             showInstallSheet = false
@@ -260,13 +252,12 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
         }
         Spacer(Modifier.height(24.dp))
         Button(onClick = { showInstallSheet = true }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Icon(Icons.Filled.Build, contentDescription = null)
+            Icon(Icons.Filled.Settings, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("安装 / 更新 RFCore", style = MaterialTheme.typography.titleMedium)
         }
     }
 
-    // 安装菜单 (BottomSheet)
     if (showInstallSheet) {
         ModalBottomSheet(onDismissRequest = { showInstallSheet = false }) {
             Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
@@ -304,7 +295,6 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
         }
     }
 
-    // 警告弹窗：直接安装
     if (showDirectWarn) {
         AlertDialog(
             onDismissRequest = { showDirectWarn = false },
@@ -321,7 +311,6 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
         )
     }
 
-    // 警告弹窗：OTA 安装
     if (showOtaWarn) {
         AlertDialog(
             onDismissRequest = { showOtaWarn = false },
@@ -340,7 +329,7 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
 }
 
 // =======================================================
-// ⚙️ 标签四：设置页 (自动更新开关)
+// ⚙️ 标签四：设置页
 // =======================================================
 @Composable
 fun SettingsScreen(prefs: android.content.SharedPreferences) {
@@ -366,7 +355,7 @@ fun SettingsScreen(prefs: android.content.SharedPreferences) {
             headlineContent = { Text("检查更新") },
             supportingContent = { Text("当前版本: $CURRENT_VERSION") },
             modifier = Modifier.clickable { 
-                // 手动检查更新的逻辑留空
+                // 手动检查更新逻辑
             }
         )
     }
@@ -381,10 +370,11 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
     var consoleLogs by remember { mutableStateOf("===================================\n* RFCore Deployment Engine *\n===================================\n") }
     var isFinished by remember { mutableStateOf(false) }
 
-    // 模拟刷机过程 (后续可以在这里对接底层的真实 JNI 或 Shell 执行逻辑)
+    // 模拟刷机过程 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
-            val appendLog = { msg: String -> 
+            // 🚨 修复点：将 appendLog 定义为标准的 suspend 函数
+            suspend fun appendLog(msg: String) {
                 withContext(Dispatchers.Main) { consoleLogs += "$msg\n" }
                 delay(400) // 模拟耗时操作
             }
@@ -429,7 +419,6 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().background(Color(0xFF1E1E1E))) {
-        // 伪终端顶部栏
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, enabled = isFinished) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "返回", tint = if (isFinished) Color.White else Color.Gray)
@@ -437,7 +426,6 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
             Text("终端日志", color = Color.White, style = MaterialTheme.typography.titleLarge)
         }
         
-        // 日志输出区域
         Text(
             text = consoleLogs,
             color = Color(0xFF00FF00),
@@ -448,7 +436,7 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
 }
 
 // =======================================================
-// 🛡️ 标签二：授权管理 (保持不变)
+// 🛡️ 标签二：授权管理
 // =======================================================
 @Composable
 fun AuthScreen() {
@@ -510,14 +498,13 @@ fun AuthScreen() {
 }
 
 // =======================================================
-// 📜 标签三：系统日志 (完善版)
+// 📜 标签三：系统日志
 // =======================================================
 @Composable
 fun LogScreen() {
     var logs by remember { mutableStateOf("正在读取系统底层日志...") }
     val scope = rememberCoroutineScope()
 
-    // 每次进入页面自动刷新
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             val fetched = EnvUtils.fetchLogs()
@@ -554,7 +541,7 @@ fun LogScreen() {
                 text = logs,
                 fontFamily = FontFamily.Monospace,
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState()) // 完美支持滚动
+                modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState())
             )
         }
     }
