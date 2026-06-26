@@ -6,22 +6,30 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import java.util.concurrent.CompletableFuture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.concurrent.CompletableFuture
 
-// 导入你的 AIDL 接口
+// AIDL 接口导入 (请确保与你的包名一致)
 import rfcore.daemon.IRFCoreBootstrap
 import rfcore.daemon.IRFCoreService
 import rfcore.daemon.PolicyRecord
@@ -32,176 +40,303 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    RFCoreMainScreen()
-                }
+                RFCoreApp()
             }
         }
     }
 }
 
-fun connectToDaemon(): IRFCoreService? {
-    try {
-        val serviceManager = Class.forName("android.os.ServiceManager")
-        val getServiceMethod = serviceManager.getMethod("getService", String::class.java)
-        val rawBinder = getServiceMethod.invoke(null, "rfcore.bootstrap") as IBinder?
-        if (rawBinder != null) {
-            val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
-            return bootstrap.worker 
+// =======================================================
+// 🛠️ 系统环境探测工具类
+// =======================================================
+object EnvUtils {
+    // 检测当前系统是否已经有 Root 权限 (用于判断能否直接安装)
+    fun hasRoot(): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
+            process.waitFor() == 0
+        } catch (e: Exception) {
+            false
         }
-    } catch (e: Exception) {
-        Log.e("RFCore_App", "连接底层崩溃", e)
     }
-    return null
+
+    // 检测是否为 A/B 分区设备 (动态 A/B 或 Virtual A/B)
+    fun isABDevice(): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("getprop", "ro.build.ab_update"))
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val isAB = reader.readLine()?.trim() == "true"
+            reader.close()
+            isAB
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    // 抓取 RFCore 相关日志
+    fun fetchLogs(): String {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-s", "RFCoreDaemon", "RFCoreAuthDB", "RFCore_App"))
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val log = reader.readText()
+            reader.close()
+            if (log.isBlank()) "暂无日志输出..." else log
+        } catch (e: Exception) {
+            "无法读取日志: ${e.message}"
+        }
+    }
 }
 
-data class AuthRequestData(
-    val uid: Int,
-    val processName: String,
-    val capability: String,
-    val future: CompletableFuture<Int> 
-)
-
+// =======================================================
+// 🎨 主架构：包含底部导航的脚手架
+// =======================================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RFCoreMainScreen() {
+fun RFCoreApp() {
+    var selectedTab by remember { mutableStateOf(0) }
+    val tabs = listOf("主页", "授权", "日志")
+    val icons = listOf(Icons.Filled.Home, Icons.Filled.Security, Icons.Filled.List)
+
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                tabs.forEachIndexed { index, title ->
+                    NavigationBarItem(
+                        icon = { Icon(icons[index], contentDescription = title) },
+                        label = { Text(title) },
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index }
+                    )
+                }
+            }
+        }
+    ) { paddingValues ->
+        Box(modifier = Modifier.padding(paddingValues)) {
+            when (selectedTab) {
+                0 -> HomeScreen()
+                1 -> AuthScreen()
+                2 -> LogScreen()
+            }
+        }
+    }
+}
+
+// =======================================================
+// 🏠 标签一：主页 (状态卡片与安装逻辑)
+// =======================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope() // 引入协程作用域
-    
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState()
+    var showInstallSheet by remember { mutableStateOf(false) }
+
+    // 状态探测
+    val hasRoot by remember { mutableStateOf(EnvUtils.hasRoot()) }
+    val isAB by remember { mutableStateOf(EnvUtils.isABDevice()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Text("RFCore", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("独立级 Root 安全引擎", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        
+        Spacer(Modifier.height(24.dp))
+
+        // 状态卡片
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ElevatedCard(modifier = Modifier.weight(1f)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("App 版本", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text("v1.0.0-dev", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+            }
+            ElevatedCard(modifier = Modifier.weight(1f), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("系统环境", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (isAB) "A/B 分区" else "A-Only", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // 核心安装按钮
+        Button(
+            onClick = { showInstallSheet = true },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Icon(Icons.Filled.Build, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("安装 / 更新 RFCore", style = MaterialTheme.typography.titleMedium)
+        }
+    }
+
+    // ================= 智能安装菜单 (BottomSheet) =================
+    if (showInstallSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showInstallSheet = false },
+            sheetState = sheetState
+        ) {
+            Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp)) {
+                Text("选择安装方式", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(16.dp))
+
+                if (hasRoot) {
+                    ListItem(
+                        headlineContent = { Text("直接安装 (推荐)") },
+                        supportingContent = { Text("修补并安装到当前活动槽位") },
+                        leadingContent = { Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary) },
+                        modifier = Modifier.clickable { 
+                            Toast.makeText(context, "执行直接安装...", Toast.LENGTH_SHORT).show()
+                            showInstallSheet = false 
+                        }
+                    )
+                    Divider()
+                }
+
+                ListItem(
+                    headlineContent = { Text("选择并修补一个文件") },
+                    supportingContent = { Text("手动修补 boot/init_boot 镜像文件") },
+                    leadingContent = { Icon(Icons.Filled.Edit, null) },
+                    modifier = Modifier.clickable { 
+                        Toast.makeText(context, "请选择 boot.img...", Toast.LENGTH_SHORT).show()
+                        showInstallSheet = false 
+                    }
+                )
+                
+                if (hasRoot && isAB) {
+                    Divider()
+                    ListItem(
+                        headlineContent = { Text("安装到未使用的槽位 (OTA后)") },
+                        supportingContent = { Text("系统更新后安装到另一个槽位防掉 Root") },
+                        leadingContent = { Icon(Icons.Filled.Refresh, null) },
+                        modifier = Modifier.clickable { 
+                            Toast.makeText(context, "安装至非活动槽位...", Toast.LENGTH_SHORT).show()
+                            showInstallSheet = false 
+                        }
+                    )
+                }
+                Spacer(Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+// =======================================================
+// 🛡️ 标签二：授权管理 (底层交互)
+// =======================================================
+@Composable
+fun AuthScreen() {
+    val context = LocalContext.current
     var rfService by remember { mutableStateOf<IRFCoreService?>(null) }
     var policyList by remember { mutableStateOf<List<PolicyRecord>>(emptyList()) }
-    var currentAuthRequest by remember { mutableStateOf<AuthRequestData?>(null) }
+    val scope = rememberCoroutineScope()
 
-    val authCallback = remember {
-        object : IAuthCallback.Stub() {
-            override fun onAuthRequested(uid: Int, processName: String, capability: String): Int {
-                Log.w("RFCore_App", "🚨 收到底层拦截警报！UID: $uid, 进程: $processName")
-                val future = CompletableFuture<Int>()
-                // 推送到前台触发弹窗显示
-                currentAuthRequest = AuthRequestData(uid, processName, capability, future)
-                // 挂起当前的 Binder 线程，等待用户决定
-                return future.get() 
-            }
-        }
-    }
-
-    // 🚨 核心修复：切到后台线程初始化，防止 Binder 锁死 UI 线程
+    // 连接底层并拉取数据的逻辑 (这里简化了弹窗逻辑，保持与你之前的测试兼容)
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            val service = connectToDaemon()
-            if (service != null) {
-                rfService = service
-                try {
-                    rfService!!.registerAuthCallback(authCallback)
+            try {
+                val serviceManager = Class.forName("android.os.ServiceManager")
+                val getServiceMethod = serviceManager.getMethod("getService", String::class.java)
+                val rawBinder = getServiceMethod.invoke(null, "rfcore.bootstrap") as IBinder?
+                if (rawBinder != null) {
+                    val bootstrap = IRFCoreBootstrap.Stub.asInterface(rawBinder)
+                    rfService = bootstrap.worker
                     val policies = rfService!!.policies?.toList() ?: emptyList()
-                    withContext(Dispatchers.Main) {
-                        policyList = policies
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "通道初始化失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
+                    withContext(Dispatchers.Main) { policyList = policies }
                 }
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
-    // ----------------------------------------------------
-    // 拦截弹窗组件
-    // ----------------------------------------------------
-    currentAuthRequest?.let { request ->
-        AlertDialog(
-            onDismissRequest = { 
-                request.future.complete(0)
-                currentAuthRequest = null 
-            },
-            title = { Text("⚠️ 越权行为拦截警报", color = MaterialTheme.colorScheme.error) },
-            text = {
-                Column {
-                    Text("检测到有未授权应用正在试图突破核心数据隔离：")
-                    Spacer(Modifier.height(8.dp))
-                    Text("目标 UID: ${request.uid}", fontWeight = FontWeight.Bold)
-                    Text("可疑进程: ${request.processName}", fontWeight = FontWeight.Bold)
-                    Text("越权动作: ${request.capability}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    request.future.complete(1) // 返回 1 表示放行
-                    currentAuthRequest = null
-                }) { Text("放行执行") }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = {
-                    request.future.complete(0) // 返回 0 表示拦截拒绝
-                    currentAuthRequest = null
-                }) { Text("残忍拒绝") }
-            }
-        )
-    }
-
-    // ----------------------------------------------------
-    // 主界面布局
-    // ----------------------------------------------------
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Text("RFCore 授权管理", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(16.dp))
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("超级用户", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(16.dp))
         
-        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if(rfService != null) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = if (rfService != null) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.errorContainer)
+        ) {
             Text(
-                text = if (rfService != null) "✅ 守护进程已连接 | 拦截器运行中" else "❌ 底层未连接",
+                text = if (rfService != null) "✅ RFCore 守护进程已激活" else "❌ 底层未运行 (请先安装)",
                 modifier = Modifier.padding(16.dp),
                 style = MaterialTheme.typography.titleMedium
             )
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
 
-        // 🚨 新增：模拟底层拦截功能测试按钮
-        if (rfService != null) {
-            Button(
-                onClick = {
-                    scope.launch(Dispatchers.IO) { // 在后台线程发起请求
-                        try {
-                            // 呼叫底层的 getStatus 方法，在 C++ 内部触发反向拦截测试
-                            val result = rfService!!.status
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "模拟测试完毕！底层收到的处理结果: $result", Toast.LENGTH_LONG).show()
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(context, "测试触发失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-            ) {
-                Text("🚀 点击模拟【底层越权拦截】双向测试")
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
+        Spacer(Modifier.height(16.dp))
         
         if (policyList.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无授权策略 (列表为空)", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("暂无授权应用", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(policyList) { policy -> PolicyCard(policy) }
+            LazyColumn {
+                items(policyList) { policy ->
+                    ListItem(
+                        headlineContent = { Text(policy.packageName, fontWeight = FontWeight.Bold) },
+                        supportingContent = { Text("UID: ${policy.uid} | ${policy.capability}") },
+                        trailingContent = {
+                            Switch(checked = policy.isGranted == 1, onCheckedChange = { /* TODO: 更新策略 */ })
+                        }
+                    )
+                    Divider()
+                }
             }
         }
     }
 }
 
+// =======================================================
+// 📜 标签三：系统日志 (Logcat)
+// =======================================================
 @Composable
-fun PolicyCard(policy: PolicyRecord) {
-    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "包名: ${policy.packageName}", fontWeight = FontWeight.Bold)
-            Text(text = "目标 UID: ${policy.uid}")
-            Text(text = "请求权限: ${policy.capability}", color = MaterialTheme.colorScheme.primary)
-            Text(text = "状态: ${if (policy.isGranted == 1) "✅ 已允许" else "❌ 已拒绝"}", color = if (policy.isGranted == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+fun LogScreen() {
+    var logs by remember { mutableStateOf("加载中...") }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        scope.launch(Dispatchers.IO) {
+            val fetched = EnvUtils.fetchLogs()
+            withContext(Dispatchers.Main) { logs = fetched }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("核心日志", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            IconButton(onClick = { 
+                scope.launch(Dispatchers.IO) {
+                    val fetched = EnvUtils.fetchLogs()
+                    withContext(Dispatchers.Main) { logs = fetched }
+                }
+            }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "刷新")
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Text(
+                text = logs,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState())
+            )
         }
     }
 }
