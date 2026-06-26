@@ -2,7 +2,6 @@ package com.rfcore.manager
 
 import android.os.Bundle
 import android.os.IBinder
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,7 +26,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.util.concurrent.CompletableFuture
 
 // AIDL 接口导入 (请确保与你的包名一致)
 import rfcore.daemon.IRFCoreBootstrap
@@ -50,7 +48,6 @@ class MainActivity : ComponentActivity() {
 // 🛠️ 系统环境探测工具类
 // =======================================================
 object EnvUtils {
-    // 检测当前系统是否已经有 Root 权限 (用于判断能否直接安装)
     fun hasRoot(): Boolean {
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
@@ -60,7 +57,6 @@ object EnvUtils {
         }
     }
 
-    // 检测是否为 A/B 分区设备 (动态 A/B 或 Virtual A/B)
     fun isABDevice(): Boolean {
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("getprop", "ro.build.ab_update"))
@@ -73,7 +69,6 @@ object EnvUtils {
         }
     }
     
-    // 抓取 RFCore 相关日志
     fun fetchLogs(): String {
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-s", "RFCoreDaemon", "RFCoreAuthDB", "RFCore_App"))
@@ -95,7 +90,8 @@ object EnvUtils {
 fun RFCoreApp() {
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("主页", "授权", "日志")
-    val icons = listOf(Icons.Filled.Home, Icons.Filled.Security, Icons.Filled.List)
+    // 🚨 修复 1：将 Security 替换为核心库自带的 Lock 图标
+    val icons = listOf(Icons.Filled.Home, Icons.Filled.Lock, Icons.Filled.List)
 
     Scaffold(
         bottomBar = {
@@ -128,11 +124,9 @@ fun RFCoreApp() {
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState()
     var showInstallSheet by remember { mutableStateOf(false) }
 
-    // 状态探测
     val hasRoot by remember { mutableStateOf(EnvUtils.hasRoot()) }
     val isAB by remember { mutableStateOf(EnvUtils.isABDevice()) }
 
@@ -148,7 +142,6 @@ fun HomeScreen() {
         
         Spacer(Modifier.height(24.dp))
 
-        // 状态卡片
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             ElevatedCard(modifier = Modifier.weight(1f)) {
                 Column(Modifier.padding(16.dp)) {
@@ -168,20 +161,19 @@ fun HomeScreen() {
 
         Spacer(Modifier.height(24.dp))
 
-        // 核心安装按钮
         Button(
             onClick = { showInstallSheet = true },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
         ) {
-            Icon(Icons.Filled.Build, contentDescription = null)
+            // 🚨 修复 2：将 Build 替换为 Settings 图标
+            Icon(Icons.Filled.Settings, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("安装 / 更新 RFCore", style = MaterialTheme.typography.titleMedium)
         }
     }
 
-    // ================= 智能安装菜单 (BottomSheet) =================
     if (showInstallSheet) {
         ModalBottomSheet(
             onDismissRequest = { showInstallSheet = false },
@@ -195,13 +187,14 @@ fun HomeScreen() {
                     ListItem(
                         headlineContent = { Text("直接安装 (推荐)") },
                         supportingContent = { Text("修补并安装到当前活动槽位") },
-                        leadingContent = { Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary) },
+                        // 🚨 修复 3：将 CheckCircle 替换为 Done 图标
+                        leadingContent = { Icon(Icons.Filled.Done, null, tint = MaterialTheme.colorScheme.primary) },
                         modifier = Modifier.clickable { 
                             Toast.makeText(context, "执行直接安装...", Toast.LENGTH_SHORT).show()
                             showInstallSheet = false 
                         }
                     )
-                    Divider()
+                    HorizontalDivider()
                 }
 
                 ListItem(
@@ -215,7 +208,7 @@ fun HomeScreen() {
                 )
                 
                 if (hasRoot && isAB) {
-                    Divider()
+                    HorizontalDivider()
                     ListItem(
                         headlineContent = { Text("安装到未使用的槽位 (OTA后)") },
                         supportingContent = { Text("系统更新后安装到另一个槽位防掉 Root") },
@@ -233,16 +226,13 @@ fun HomeScreen() {
 }
 
 // =======================================================
-// 🛡️ 标签二：授权管理 (底层交互)
+// 🛡️ 标签二：授权管理
 // =======================================================
 @Composable
 fun AuthScreen() {
-    val context = LocalContext.current
     var rfService by remember { mutableStateOf<IRFCoreService?>(null) }
     var policyList by remember { mutableStateOf<List<PolicyRecord>>(emptyList()) }
-    val scope = rememberCoroutineScope()
 
-    // 连接底层并拉取数据的逻辑 (这里简化了弹窗逻辑，保持与你之前的测试兼容)
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             try {
@@ -268,7 +258,7 @@ fun AuthScreen() {
             colors = CardDefaults.cardColors(containerColor = if (rfService != null) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.errorContainer)
         ) {
             Text(
-                text = if (rfService != null) "✅ RFCore 守护进程已激活" else "❌ 底层未运行 (请先安装)",
+                text = if (rfService != null) "✅ RFCore 守护进程已连接" else "❌ 底层未运行 (请先安装)",
                 modifier = Modifier.padding(16.dp),
                 style = MaterialTheme.typography.titleMedium
             )
@@ -290,7 +280,7 @@ fun AuthScreen() {
                             Switch(checked = policy.isGranted == 1, onCheckedChange = { /* TODO: 更新策略 */ })
                         }
                     )
-                    Divider()
+                    HorizontalDivider()
                 }
             }
         }
@@ -298,7 +288,7 @@ fun AuthScreen() {
 }
 
 // =======================================================
-// 📜 标签三：系统日志 (Logcat)
+// 📜 标签三：系统日志
 // =======================================================
 @Composable
 fun LogScreen() {
