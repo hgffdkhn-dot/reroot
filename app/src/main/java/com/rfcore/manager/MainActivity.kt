@@ -90,7 +90,6 @@ object EnvUtils {
 fun RFCoreApp() {
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("主页", "授权", "日志")
-    // 🚨 修复 1：将 Security 替换为核心库自带的 Lock 图标
     val icons = listOf(Icons.Filled.Home, Icons.Filled.Lock, Icons.Filled.List)
 
     Scaffold(
@@ -167,7 +166,6 @@ fun HomeScreen() {
                 .fillMaxWidth()
                 .height(56.dp)
         ) {
-            // 🚨 修复 2：将 Build 替换为 Settings 图标
             Icon(Icons.Filled.Settings, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("安装 / 更新 RFCore", style = MaterialTheme.typography.titleMedium)
@@ -187,14 +185,14 @@ fun HomeScreen() {
                     ListItem(
                         headlineContent = { Text("直接安装 (推荐)") },
                         supportingContent = { Text("修补并安装到当前活动槽位") },
-                        // 🚨 修复 3：将 CheckCircle 替换为 Done 图标
                         leadingContent = { Icon(Icons.Filled.Done, null, tint = MaterialTheme.colorScheme.primary) },
                         modifier = Modifier.clickable { 
                             Toast.makeText(context, "执行直接安装...", Toast.LENGTH_SHORT).show()
                             showInstallSheet = false 
                         }
                     )
-                    HorizontalDivider()
+                    // 🚨 完美降级：使用旧版的 Divider()
+                    Divider()
                 }
 
                 ListItem(
@@ -208,7 +206,8 @@ fun HomeScreen() {
                 )
                 
                 if (hasRoot && isAB) {
-                    HorizontalDivider()
+                    // 🚨 完美降级：使用旧版的 Divider()
+                    Divider()
                     ListItem(
                         headlineContent = { Text("安装到未使用的槽位 (OTA后)") },
                         supportingContent = { Text("系统更新后安装到另一个槽位防掉 Root") },
@@ -280,7 +279,8 @@ fun AuthScreen() {
                             Switch(checked = policy.isGranted == 1, onCheckedChange = { /* TODO: 更新策略 */ })
                         }
                     )
-                    HorizontalDivider()
+                    // 🚨 完美降级：使用旧版的 Divider()
+                    Divider()
                 }
             }
         }
