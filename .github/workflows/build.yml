@@ -13,22 +13,28 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # 1. 恢复现代安卓必备的 Java 17
     - name: Setup Java JDK 17
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
         java-version: '17'
 
-    # 🚨 2. 核心大招：强制引入官方 Gradle 8.4 环境，绕过你本地的烂摊子
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: '8.4'
+    # 🚨 终极绝杀：强行修改项目配置，将 Gradle 8.4 下载源指向腾讯云镜像！
+    - name: Force Use Tencent Cloud Gradle Mirror
+      run: |
+        mkdir -p gradle/wrapper
+        echo "distributionBase=GRADLE_USER_HOME" > gradle/wrapper/gradle-wrapper.properties
+        echo "distributionPath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
+        echo "distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.4-bin.zip" >> gradle/wrapper/gradle-wrapper.properties
+        echo "zipStoreBase=GRADLE_USER_HOME" >> gradle/wrapper/gradle-wrapper.properties
+        echo "zipStorePath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
 
-    # 🚨 3. 注意这里用的是纯正的 `gradle` 命令，而不是你本地的 `./gradlew`
+    - name: Make Gradle Executable
+      run: chmod +x ./gradlew
+
+    # 🚨 使用本地的 gradlew，它会乖乖去腾讯云拉取 8.4 版本
     - name: Build APK (Debug)
-      run: gradle assembleDebug
+      run: ./gradlew assembleDebug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
