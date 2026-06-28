@@ -13,21 +13,20 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # 🚨 核心修复：使用最稳定的 temurin 发行版，强行锁死系统环境为 Java 17
-    - name: Setup Java JDK 17
+    # 🚨 核心降维：退回 Java 11！完美适配你项目里的 Gradle 7.0.2
+    - name: Setup Java JDK 11
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '17'
+        java-version: '11'
 
     - name: Make Gradle Executable
       run: chmod +x ./gradlew
 
-    # 🚨 精准打击：明确要求 Gradle 去打包 app 模块，并开启堆栈追踪
-    - name: Build APK (Debug)
-      run: ./gradlew :app:assembleDebug --stacktrace
+    # 🚨 暴力打包：直接执行 assemble，并开启 info 级日志
+    - name: Build APK
+      run: ./gradlew assemble --stacktrace --info
 
-    # 🚨 模糊捕获：无视路径变动，直接把所有生成的 apk 抓出来
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
