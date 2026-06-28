@@ -13,16 +13,16 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Setup Java JDK 17
+    # 🚨 核心修复：将 java-version 从 '17' 改回 '11'
+    - name: Setup Java JDK 11
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
-        java-version: '17'
+        java-version: '11'
 
     - name: Make Gradle Executable
       run: chmod +x ./gradlew
 
-    # 🚨 Gradle 会自动扫描 jniLibs 目录，把你准备好的三个 .so 文件打包进 APK
     - name: Build APK (Debug)
       run: ./gradlew assembleDebug
 
