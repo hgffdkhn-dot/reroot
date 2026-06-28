@@ -13,20 +13,31 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # 🚨 核心降维：退回 Java 11！完美适配你项目里的 Gradle 7.0.2
-    - name: Setup Java JDK 11
+    # 1. 现代 Android 开发必备的 Java 17
+    - name: Setup Java JDK 17
       uses: actions/setup-java@v4
       with:
-        distribution: 'temurin'
-        java-version: '11'
+        distribution: 'zulu'
+        java-version: '17'
+
+    # 🚨 2. 核心补救：强行覆盖老旧配置，用腾讯云秒下 Gradle 8.4，防断网防崩溃！
+    - name: Force Upgrade to Gradle 8.4 (Tencent Mirror)
+      run: |
+        mkdir -p gradle/wrapper
+        echo "distributionBase=GRADLE_USER_HOME" > gradle/wrapper/gradle-wrapper.properties
+        echo "distributionPath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
+        echo "distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.4-bin.zip" >> gradle/wrapper/gradle-wrapper.properties
+        echo "zipStoreBase=GRADLE_USER_HOME" >> gradle/wrapper/gradle-wrapper.properties
+        echo "zipStorePath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
 
     - name: Make Gradle Executable
       run: chmod +x ./gradlew
 
-    # 🚨 暴力打包：直接执行 assemble，并开启 info 级日志
-    - name: Build APK
-      run: ./gradlew assemble --stacktrace --info
+    # 🚨 3. 精准打击：明确告诉 Gradle 只打包 app 模块，避开任务找不到的坑
+    - name: Build APK (Debug)
+      run: ./gradlew :app:assembleDebug --stacktrace
 
+    # 4. 全局捕获：打包成功后，抓取 APK 上传
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
