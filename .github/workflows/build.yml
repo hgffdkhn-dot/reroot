@@ -13,34 +13,21 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
+    # 🚨 核心修复：使用最稳定的 temurin 发行版，强行锁死系统环境为 Java 17
     - name: Setup Java JDK 17
       uses: actions/setup-java@v4
       with:
-        distribution: 'zulu'
+        distribution: 'temurin'
         java-version: '17'
-
-    - name: Force Use Tencent Cloud Gradle Mirror
-      run: |
-        mkdir -p gradle/wrapper
-        echo "distributionBase=GRADLE_USER_HOME" > gradle/wrapper/gradle-wrapper.properties
-        echo "distributionPath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
-        echo "distributionUrl=https\://mirrors.cloud.tencent.com/gradle/gradle-8.4-bin.zip" >> gradle/wrapper/gradle-wrapper.properties
-        echo "zipStoreBase=GRADLE_USER_HOME" >> gradle/wrapper/gradle-wrapper.properties
-        echo "zipStorePath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
 
     - name: Make Gradle Executable
       run: chmod +x ./gradlew
 
-    # 🚨 侦察与无差别打包
-    - name: Build APK (All Variants)
-      run: |
-        # 1. 打印所有可用的构建任务（万一失败了，我们看日志就知道真正名字叫啥）
-        ./gradlew tasks --all 
-        
-        # 2. 无差别全量打包！不管你是 Debug、Release 还是什么多渠道包，全给我打出来！
-        ./gradlew assemble
+    # 🚨 精准打击：明确要求 Gradle 去打包 app 模块，并开启堆栈追踪
+    - name: Build APK (Debug)
+      run: ./gradlew :app:assembleDebug --stacktrace
 
-    # 🚨 模糊捕获：不再局限于 debug 文件夹，只要是 apk 后缀的产物全抓走！
+    # 🚨 模糊捕获：无视路径变动，直接把所有生成的 apk 抓出来
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
