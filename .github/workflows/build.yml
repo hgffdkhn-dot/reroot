@@ -19,7 +19,6 @@ jobs:
         distribution: 'zulu'
         java-version: '17'
 
-    # 🚨 终极绝杀：强行修改项目配置，将 Gradle 8.4 下载源指向腾讯云镜像！
     - name: Force Use Tencent Cloud Gradle Mirror
       run: |
         mkdir -p gradle/wrapper
@@ -32,12 +31,18 @@ jobs:
     - name: Make Gradle Executable
       run: chmod +x ./gradlew
 
-    # 🚨 使用本地的 gradlew，它会乖乖去腾讯云拉取 8.4 版本
-    - name: Build APK (Debug)
-      run: ./gradlew assembleDebug
+    # 🚨 侦察与无差别打包
+    - name: Build APK (All Variants)
+      run: |
+        # 1. 打印所有可用的构建任务（万一失败了，我们看日志就知道真正名字叫啥）
+        ./gradlew tasks --all 
+        
+        # 2. 无差别全量打包！不管你是 Debug、Release 还是什么多渠道包，全给我打出来！
+        ./gradlew assemble
 
+    # 🚨 模糊捕获：不再局限于 debug 文件夹，只要是 apk 后缀的产物全抓走！
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: RFCore-Manager-APK
-        path: app/build/outputs/apk/debug/*.apk
+        path: app/build/outputs/apk/**/*.apk
