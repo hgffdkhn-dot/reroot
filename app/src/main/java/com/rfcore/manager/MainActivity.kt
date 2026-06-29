@@ -3,9 +3,7 @@ package com.rfcore.manager
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
-import android.os.IBinder
 import android.util.Log
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -40,18 +38,12 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 
-// AIDL 接口导入
-import rfcore.daemon.IRFCoreBootstrap
-import rfcore.daemon.IRFCoreService
-import rfcore.daemon.PolicyRecord
-
 const val CURRENT_VERSION = "v1.0.0"
 const val TAG = "RFCore_App"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.i(TAG, "==== RFCore 管理器已启动 ====")
         setContent {
             MaterialTheme {
                 RFCoreApp()
@@ -122,12 +114,10 @@ object EnvUtils {
 }
 
 object ShellUtils {
-    // 🚨 核心修复：智能切换 su (超级用户) 和 sh (普通用户)
     suspend fun execStream(cmd: String, useRoot: Boolean, onLineOutput: suspend (String) -> Unit): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 val shell = if (useRoot) "su" else "sh"
-                Log.i(TAG, "下发命令 ($shell): $cmd")
                 val process = Runtime.getRuntime().exec(arrayOf(shell, "-c", cmd))
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                 val errorReader = BufferedReader(InputStreamReader(process.errorStream))
@@ -149,7 +139,7 @@ object ShellUtils {
 }
 
 // =======================================================
-// 🎨 主架构与导航控制 (UI部分保持极简)
+// 🎨 主架构与导航控制
 // =======================================================
 @Composable
 fun RFCoreApp() {
@@ -205,12 +195,15 @@ fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
     }
 }
 
+// 🚨 恢复了丢失的 UI 面板
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
     var showInstallSheet by remember { mutableStateOf(false) }
     val hasRoot by remember { mutableStateOf(EnvUtils.hasRoot()) }
     val isAB by remember { mutableStateOf(EnvUtils.isABDevice()) }
+    var showDirectWarn by remember { mutableStateOf(false) }
+    var showOtaWarn by remember { mutableStateOf(false) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
@@ -223,6 +216,25 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
         Text("RFCore", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text("独立级 Root 安全引擎", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+
+        // 🚨 找回的高级 UI 卡片，警告消除！
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            ElevatedCard(modifier = Modifier.weight(1f)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("App 版本", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(CURRENT_VERSION, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+            }
+            ElevatedCard(modifier = Modifier.weight(1f), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("系统环境", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(if (isAB) "A/B 分区" else "A-Only", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
         Spacer(Modifier.height(24.dp))
 
         Button(onClick = { showInstallSheet = true }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
@@ -238,12 +250,32 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
                 Text("选择安装方式", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(16.dp))
 
+                if (hasRoot) {
+                    ListItem(
+                        headlineContent = { Text("直接安装 (推荐)") },
+                        supportingContent = { Text("修补并安装到当前活动槽位") },
+                        leadingContent = { Icon(Icons.Filled.Done, null, tint = MaterialTheme.colorScheme.primary) },
+                        modifier = Modifier.clickable { showDirectWarn = true }
+                    )
+                    Divider()
+                }
+
                 ListItem(
                     headlineContent = { Text("选择并修补一个文件") },
                     supportingContent = { Text("手动修补 boot/init_boot 镜像文件") },
                     leadingContent = { Icon(Icons.Filled.Edit, null) },
                     modifier = Modifier.clickable { filePickerLauncher.launch("*/*") }
                 )
+                
+                if (hasRoot && isAB) {
+                    Divider()
+                    ListItem(
+                        headlineContent = { Text("安装到未使用的槽位 (OTA后)") },
+                        supportingContent = { Text("系统更新后安装到另一个槽位防掉 Root") },
+                        leadingContent = { Icon(Icons.Filled.Refresh, null) },
+                        modifier = Modifier.clickable { showOtaWarn = true }
+                    )
+                }
                 Spacer(Modifier.height(32.dp))
             }
         }
@@ -251,7 +283,7 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
 }
 
 // =======================================================
-// 💻 真实刷机终端：双通道自适应执行逻辑
+// 💻 真实刷机终端：越狱级部署逻辑
 // =======================================================
 @Composable
 fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
@@ -272,20 +304,16 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
             val magiskbootSo = "$libDir/libmagiskboot.so"
 
             appendLog("- 系统架构检测: arm64-v8a")
-            appendLog(if (hasRoot) "- 获取到 Root 权限，进入超级特权模式" else "- 未获取 Root 权限，进入免 Root 修补模式")
+            appendLog(if (hasRoot) "- [超级权限模式] 已激活" else "- [免 Root 模式] 已激活")
             
-            // 🚨 核心逻辑：解决沙盒隔离与执行权限博弈
+            // 🚨 终极路径黑魔法：根据权限状态动态决定兵器部署位置
             val activeMagiskboot = if (hasRoot) {
-                // 如果有 Root，为了防止 su 看不见隔离目录里的 .so，我们把它复制到通用的 cache 目录
-                val localBin = File(context.cacheDir, "magiskboot_bin")
-                if (!localBin.exists()) {
-                    File(magiskbootSo).copyTo(localBin, overwrite = true)
-                }
-                // 让 su 赋予它最高权限，彻底打破枷锁
-                ShellUtils.execStream("chmod 777 ${localBin.absolutePath}", true) {}
-                localBin.absolutePath
+                val tmpBin = "/data/local/tmp/rfcore_magiskboot"
+                appendLog("- 正在向公共法外之地 (/data/local/tmp) 部署引擎...")
+                ShellUtils.execStream("cp $magiskbootSo $tmpBin && chmod 777 $tmpBin", true) {}
+                tmpBin
             } else {
-                // 如果没有 Root，普通 sh 可以直接执行自己 lib 目录里的 .so 文件
+                appendLog("- 正在利用 nativeLibraryDir 漏洞绕过 W^X 机制...")
                 magiskbootSo
             }
 
@@ -293,7 +321,7 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
                 "patch_file" -> {
                     appendLog("- 触发动作: 手动修补外部镜像")
                     if (fileUri == null) {
-                        appendLog("错误: 文件 URI 为空！")
+                        appendLog("❌ 错误: 未选择文件！")
                         isFinished = true
                         return@launch
                     }
@@ -303,15 +331,13 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
                     val copySuccess = BootPatchEngine.copyUriToCache(context, fileUri, localBoot)
                     
                     if (!copySuccess) {
-                        appendLog("错误: 镜像暂存失败，请检查读写权限。")
+                        appendLog("❌ 错误: 镜像暂存失败。")
                         isFinished = true
                         return@launch
                     }
                     appendLog("✅ 暂存成功: ${localBoot.length() / 1024 / 1024} MB")
 
-                    appendLog("- 开始呼叫引擎解包镜像...")
-                    
-                    // 🚨 自动降级执行：有 Root 用 su，没 Root 用 sh！
+                    appendLog("- 启动引擎解包 (unpack)...")
                     val unpackCmd = "cd $cacheDir && $activeMagiskboot unpack boot.img"
                     val unpackSuccess = ShellUtils.execStream(unpackCmd, hasRoot) { line -> appendLog(line) }
                     
@@ -320,27 +346,29 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
                         isFinished = true
                         return@launch
                     }
-                    appendLog("✅ 镜像解包成功！")
+                    appendLog("✅ 镜像解包完成！")
 
-                    appendLog("- 触发引擎执行 repack 封装...")
+                    appendLog("- 启动引擎封装 (repack)...")
                     val repackCmd = "cd $cacheDir && $activeMagiskboot repack boot.img new-boot.img"
                     val repackSuccess = ShellUtils.execStream(repackCmd, hasRoot) { line -> appendLog(line) }
                     
                     if (repackSuccess) {
                         val newBootFile = File(context.cacheDir, "new-boot.img")
                         if (newBootFile.exists()) {
-                            appendLog("✅ 打包成功！生成修补产物: new-boot.img")
+                            appendLog("✅ 封装成功！产物: new-boot.img")
                             val saveSuccess = BootPatchEngine.saveToDownload(context, newBootFile, "rfcore_patched.img")
                             if (saveSuccess) {
                                 appendLog("\n🎉 修补完美收官！")
-                                appendLog("👉 请在内置存储的【Download】文件夹内查找 rfcore_patched.img")
+                                appendLog("👉 镜像已保存至内置存储 【Download】 目录")
                             }
                         }
                     } else {
-                        appendLog("❌ 错误: 引擎回填封装 repack 失败！")
+                        appendLog("❌ 错误: 引擎封装失败！")
                     }
                 }
             }
+            // 清理战场
+            if (hasRoot) ShellUtils.execStream("rm -f /data/local/tmp/rfcore_magiskboot", true) {}
             withContext(Dispatchers.Main) { isFinished = true }
         }
     }
@@ -362,7 +390,7 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
 }
 
 // =======================================================
-// 🛡️ 标签二与三（保持极简框架）
+// 🛡️ 标签二与三（保持极简框架，后续填充授权逻辑）
 // =======================================================
 @Composable
 fun AuthScreen() {
@@ -374,10 +402,21 @@ fun AuthScreen() {
 @Composable
 fun LogScreen() {
     var logs by remember { mutableStateOf("日志加载中...") }
+    val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("引擎日志", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("引擎日志", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            IconButton(onClick = {
+                logs = "刷新中..."
+                scope.launch(Dispatchers.IO) {
+                    val fetched = EnvUtils.fetchLogs()
+                    withContext(Dispatchers.Main) { logs = fetched }
+                }
+            }) { Icon(Icons.Filled.Refresh, null) }
+        }
+        Spacer(Modifier.height(8.dp))
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium) {
-            Text(text = logs, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
+            Text(text = logs, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp).verticalScroll(rememberScrollState()))
         }
     }
 }
