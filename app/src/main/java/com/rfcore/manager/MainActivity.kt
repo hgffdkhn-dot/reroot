@@ -48,7 +48,6 @@ object AppLogger {
         val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         val logLine = "[$time] [INFO] $msg"
         Log.i(TAG, msg)
-        // 在主线程更新 UI 状态
         kotlin.coroutines.EmptyCoroutineContext.let {
             logs.add(logLine)
         }
@@ -141,8 +140,7 @@ object BootPatchEngine {
 object EnvUtils {
     fun hasRoot(): Boolean {
         return try {
-            val has = Runtime.getRuntime().exec(arrayOf("su", "-c", "id")).waitFor() == 0
-            has
+            Runtime.getRuntime().exec(arrayOf("su", "-c", "id")).waitFor() == 0
         } catch (e: Exception) { false }
     }
 
@@ -214,7 +212,6 @@ fun RFCoreApp() {
 @Composable
 fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
     var selectedTab by remember { mutableStateOf(0) }
-    // 🚨 找回设置页面
     val tabs = listOf("主页", "授权", "日志", "设置")
     val icons = listOf(Icons.Filled.Home, Icons.Filled.Lock, Icons.Filled.List, Icons.Filled.Settings)
     
@@ -246,7 +243,6 @@ fun MainScreen(onStartFlashing: (String, Uri?) -> Unit) {
     }
 }
 
-// 🚨 完美恢复的主页，带 Root 探测
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
@@ -270,7 +266,6 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
         Text("独立级 Root 安全引擎", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
 
-        // 🚨 恢复的系统状态卡片，Root 检测归位！
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             ElevatedCard(modifier = Modifier.weight(1f), colors = CardDefaults.elevatedCardColors(containerColor = if(hasRoot) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer)) {
                 Column(Modifier.padding(16.dp)) {
@@ -332,10 +327,42 @@ fun HomeScreen(onStartFlashing: (String, Uri?) -> Unit) {
             }
         }
     }
+
+    if (showDirectWarn) {
+        AlertDialog(
+            onDismissRequest = { showDirectWarn = false },
+            title = { Text("高危操作警告") },
+            text = { Text("即将直接刷写您的 Boot 分区。这需要极高的底层权限。是否确认继续？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDirectWarn = false
+                    showInstallSheet = false
+                    onStartFlashing("direct", null)
+                }) { Text("确认刷写", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { showDirectWarn = false }) { Text("取消") } }
+        )
+    }
+
+    if (showOtaWarn) {
+        AlertDialog(
+            onDismissRequest = { showOtaWarn = false },
+            title = { Text("OTA 槽位安装警告") },
+            text = { Text("此功能仅限系统 OTA 更新完成后且尚未重启前使用！刷写完毕后，管理器工作模式将会切换至另一分区。是否确认？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showOtaWarn = false
+                    showInstallSheet = false
+                    onStartFlashing("ota", null)
+                }) { Text("确认执行", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { showOtaWarn = false }) { Text("取消") } }
+        )
+    }
 }
 
 // =======================================================
-// 💻 真实刷机终端：破除一切隔离
+// 💻 真实刷机终端：智能探测与 CPIO 劫持引擎
 // =======================================================
 @Composable
 fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
@@ -353,26 +380,30 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
             val hasRoot = EnvUtils.hasRoot()
             val cacheDir = context.cacheDir.absolutePath
             
-            // 🚨 我们自己释放的兵器位置
-            val localMagiskboot = File(context.filesDir, "magiskboot").absolutePath
+            val localMagiskboot = File(context.filesDir, "magiskboot")
+            val localDaemon = File(context.filesDir, "rfcore_daemon")
 
             appendLog("- 系统架构检测: arm64-v8a")
             appendLog(if (hasRoot) "- [超级权限模式] 已激活" else "- [免 Root 模式] 已激活")
             
-            // 🚨 终极沙盒越狱
+            // 🚨 终极沙盒防线破除：把执行所需的所有武器全部移到 cache 目录
+            File(localMagiskboot.absolutePath).copyTo(File(context.cacheDir, "magiskboot"), overwrite = true)
+            File(localDaemon.absolutePath).copyTo(File(context.cacheDir, "rfcore_daemon"), overwrite = true)
+            
+            // 动态决定执行路径
             val activeMagiskboot = if (hasRoot) {
                 val tmpBin = "/data/local/tmp/rfcore_magiskboot"
-                appendLog("- 正在向公共法外之地部署引擎...")
-                ShellUtils.execStream("cp $localMagiskboot $tmpBin && chmod 777 $tmpBin", true) {}
+                ShellUtils.execStream("cp ${context.cacheDir}/magiskboot $tmpBin && chmod 777 $tmpBin", true) {}
                 tmpBin
             } else {
-                appendLog("- 在私有空间内执行引擎 (免Root)...")
-                localMagiskboot
+                val cacheBin = "${context.cacheDir}/magiskboot"
+                ShellUtils.execStream("chmod 777 $cacheBin", false) {}
+                cacheBin
             }
 
             when (mode) {
                 "patch_file" -> {
-                    appendLog("- 触发动作: 手动修补外部镜像")
+                    appendLog("- 触发动作: 智能修补外部镜像")
                     val localBoot = File(context.cacheDir, "boot.img")
                     
                     val copySuccess = BootPatchEngine.copyUriToCache(context, fileUri!!, localBoot)
@@ -382,22 +413,52 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
                         return@launch
                     }
 
-                    appendLog("- 启动引擎解包 (unpack)...")
-                    val unpackCmd = "cd $cacheDir && $activeMagiskboot unpack boot.img"
-                    val unpackSuccess = ShellUtils.execStream(unpackCmd, hasRoot) { line -> appendLog(line) }
-                    
-                    if (!unpackSuccess) {
-                        appendLog("❌ 错误: 镜像解包失败！")
-                        isFinished = true
-                        return@launch
-                    }
-                    appendLog("✅ 镜像解包完成！")
+                    // 🚨 核心黑科技：动态生成 Shell 脚本，智能探测 sbin 或 overlay.d
+                    val patchScript = File(context.cacheDir, "patch.sh")
+                    patchScript.writeText("""
+                        #!/system/bin/sh
+                        cd $cacheDir
+                        echo "- 启动底层引擎解包 (unpack)..."
+                        $activeMagiskboot unpack boot.img || exit 1
+                        
+                        echo "- 正在透视 ramdisk.cpio 内部架构..."
+                        TARGET_DIR="sbin"
+                        if $activeMagiskboot cpio ramdisk.cpio "exists overlay.d"; then
+                            echo "- 探测结果: 发现 Android 12+ (overlay.d) 结构"
+                            TARGET_DIR="overlay.d/sbin"
+                            $activeMagiskboot cpio ramdisk.cpio "mkdir 0755 overlay.d" "mkdir 0755 overlay.d/sbin"
+                        else
+                            echo "- 探测结果: 发现传统 Android 11 (sbin) 结构"
+                            $activeMagiskboot cpio ramdisk.cpio "mkdir 0755 sbin"
+                        fi
+                        
+                        echo "- 正在提取并改写 init.rc..."
+                        $activeMagiskboot cpio ramdisk.cpio "extract init.rc init.rc"
+                        
+                        echo "" >> init.rc
+                        echo "service rfcore_daemon /${'$'}TARGET_DIR/rfcore_daemon" >> init.rc
+                        echo "    class main" >> init.rc
+                        echo "    user root" >> init.rc
+                        echo "    group root" >> init.rc
+                        echo "    seclabel u:r:su:s0" >> init.rc
+                        echo "    oneshot" >> init.rc
+                        
+                        echo "- 正在将修改版 init.rc 与守护进程注入 ramdisk..."
+                        $activeMagiskboot cpio ramdisk.cpio \
+                            "add 0750 init.rc init.rc" \
+                            "add 0755 ${'$'}TARGET_DIR/rfcore_daemon rfcore_daemon" || exit 1
+                            
+                        echo "- 启动引擎重新封装 (repack)..."
+                        $activeMagiskboot repack boot.img new-boot.img || exit 1
+                        echo "- 核心注入部署完毕！"
+                    """.trimIndent())
 
-                    appendLog("- 启动引擎封装 (repack)...")
-                    val repackCmd = "cd $cacheDir && $activeMagiskboot repack boot.img new-boot.img"
-                    val repackSuccess = ShellUtils.execStream(repackCmd, hasRoot) { line -> appendLog(line) }
+                    // 执行脚本
+                    ShellUtils.execStream("chmod 777 ${patchScript.absolutePath}", hasRoot) {}
+                    val runCmd = "sh ${patchScript.absolutePath}"
+                    val patchSuccess = ShellUtils.execStream(runCmd, hasRoot) { line -> appendLog(line) }
                     
-                    if (repackSuccess) {
+                    if (patchSuccess) {
                         val newBootFile = File(context.cacheDir, "new-boot.img")
                         if (newBootFile.exists()) {
                             appendLog("✅ 封装成功！产物: new-boot.img")
@@ -405,8 +466,15 @@ fun FlashingScreen(mode: String, fileUri: Uri?, onBack: () -> Unit) {
                             if (saveSuccess) appendLog("\n🎉 修补完美收官！镜像已保存至内置存储 【Download】 目录")
                         }
                     } else {
-                        appendLog("❌ 错误: 引擎封装失败！")
+                        appendLog("❌ 错误: 智能注入流程中断！")
                     }
+                    patchScript.delete()
+                }
+                "direct" -> {
+                    appendLog("- 触发动作: 直接刷写活动分区 (待接入)")
+                }
+                "ota" -> {
+                    appendLog("- 触发动作: OTA 槽位刷写 (待接入)")
                 }
             }
             if (hasRoot) ShellUtils.execStream("rm -f /data/local/tmp/rfcore_magiskboot", true) {}
@@ -437,11 +505,9 @@ fun AuthScreen() {
 
 @Composable
 fun LogScreen() {
-    // 🚨 实时监听全局 AppLogger 的变化
     val logs = AppLogger.logs
     val scrollState = rememberScrollState()
 
-    // 自动滚动到底部
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) {
             scrollState.animateScrollTo(scrollState.maxValue)
